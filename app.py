@@ -228,34 +228,6 @@ def setup_sidebar():
         for i, step in enumerate(steps, 1):
             st.markdown(f"**{i}.** {step}")
         st.markdown("---")
-        st.markdown("### ✅ Supported Features")
-        features = [
-            "🏦 Indian bank statements",
-            "📄 PDF format detection",
-            "📅 Automatic date parsing",
-            "🔗 Multi-line transaction merging",
-            "📊 Original column preservation",
-            "💾 CSV & Excel export"
-        ]
-        for feature in features:
-            st.markdown(f"• {feature}")
-        st.markdown("---")
-        st.markdown("### ℹ️ About")
-        st.info("This tool uses advanced AI algorithms to detect and extract transaction tables from bank statement PDFs with high accuracy.")
-        st.markdown("### 🛠️ Technical Info")
-        with st.expander("View Details"):
-            st.markdown("""
-            **Technology Stack:**
-            - Python 3.8+
-            - Streamlit UI Framework
-            - pandas for data processing
-            - Custom table extraction engine
-
-            **Supported Banks:**
-            - Most Indian banks
-            - Standard PDF formats
-            - Text-based PDFs (not scanned images)
-            """)
 
 def display_file_info(uploaded_file):
     st.markdown("---")

@@ -276,7 +276,7 @@ class BankStatementExtractor:
                     transaction[header_name] = ''
             
             transaction['standardized_date'] = self.standardize_date(date_value)
-            transaction['table_source'] = f"Table_{table_num}"
+            # transaction['table_source'] = f"Table_{table_num}"
             
             self.all_transactions.append(transaction)
     
