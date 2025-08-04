@@ -22,8 +22,11 @@ class BankStatementExtractor:
         try:
             with open(pdf_path, 'rb') as file:
                 pdf_reader = PyPDF2.PdfReader(file)
-                return len(pdf_reader.pages)
+                num_pages = len(pdf_reader.pages)
+                print(f"PDF validation successful - {num_pages} pages detected")
+                return num_pages
         except Exception as e:
+            print(f"PDF validation failed: {e}")
             raise Exception("Cannot read PDF file")
     
     def is_date_like(self, value):
@@ -33,10 +36,10 @@ class BankStatementExtractor:
             
         date_patterns = [
             r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',
-            r'\d{1,2}\s+\w{3}\s+\d{4}',
+            r'\d{1,2}\s+\w{3}\s*,?\s+\d{4}',  # Fixed: Added optional comma and flexible spacing
             r'\d{1,2}-\w{3}-\d{2,4}',
             r'\d{4}[-/]\d{1,2}[-/]\d{1,2}',
-            r'\d{1,2}\s+\w{3}\s+\d{2}',
+            r'\d{1,2}\s+\w{3}\s*,?\s+\d{2}',  # Fixed: Added optional comma and flexible spacing
         ]
         return any(re.search(pattern, str(value)) for pattern in date_patterns)
     
@@ -50,9 +53,11 @@ class BankStatementExtractor:
         patterns = [
             ('%d-%m-%Y', r'\d{1,2}-\d{1,2}-\d{4}'),
             ('%d/%m/%Y', r'\d{1,2}/\d{1,2}/\d{4}'),
+            ('%d %b, %Y', r'\d{1,2}\s+\w{3},\s+\d{4}'),  # Added: For "01 Jun, 2025"
             ('%d %b %Y', r'\d{1,2}\s+\w{3}\s+\d{4}'),
             ('%d-%b-%Y', r'\d{1,2}-\w{3}-\d{4}'),
             ('%d-%b-%y', r'\d{1,2}-\w{3}-\d{2}'),
+            ('%d %b, %y', r'\d{1,2}\s+\w{3},\s+\d{2}'),  # Added: For "01 Jun, 25"
             ('%d %b %y', r'\d{1,2}\s+\w{3}\s+\d{2}'),
         ]
         
@@ -192,12 +197,23 @@ class BankStatementExtractor:
         df = df.dropna(how='all').reset_index(drop=True)
         return df
     
-    def process_table(self, table, table_num):
+    def process_table(self, table, table_num, progress_callback=None):
         """Process a single table and extract transactions"""
         df = table.df.copy()
+        
+        if progress_callback:
+            progress_callback(f"Processing table {table_num}: Original shape {df.shape}")
+        
         df = self.clean_dataframe(df)
         
-        if df.empty or not self.is_transaction_table(df):
+        if df.empty:
+            if progress_callback:
+                progress_callback(f"Table {table_num}: Empty after cleaning")
+            return
+        
+        if not self.is_transaction_table(df):
+            if progress_callback:
+                progress_callback(f"Table {table_num}: Doesn't look like transaction table")
             return
         
         header_start_row = 0
@@ -207,22 +223,38 @@ class BankStatementExtractor:
                 self.extracted_headers = headers
                 self.header_row_index = header_row_idx
                 header_start_row = header_row_idx + 1
+                if progress_callback:
+                    progress_callback(f"Table {table_num}: Headers extracted from row {header_row_idx}: {headers}")
             else:
                 self.extracted_headers = [f'Column_{i}' for i in range(len(df.columns))]
+                if progress_callback:
+                    progress_callback(f"Table {table_num}: No headers found, using generic headers")
             
             self.first_table_processed = True
         else:
+            if progress_callback:
+                progress_callback(f"Table {table_num}: Using headers from first table, skipping potential header row")
             if len(df) > 0 and self.is_header_row(df.iloc[0]):
                 header_start_row = 1
         
         date_col = self.find_date_column(df, header_start_row)
         if date_col is None:
+            if progress_callback:
+                progress_callback(f"Table {table_num}: No date column found")
             return
+        
+        if progress_callback:
+            progress_callback(f"Table {table_num}: Date column found at index {date_col}")
         
         df_transactions = self.merge_multiline_transactions(df, date_col, header_start_row)
         if df_transactions.empty:
+            if progress_callback:
+                progress_callback(f"Table {table_num}: No transactions after merging")
             return
             
+        if progress_callback:
+            progress_callback(f"Table {table_num}: After merging multi-line: {df_transactions.shape}")
+        
         for i in range(len(df_transactions)):
             row = df_transactions.iloc[i]
             
@@ -246,24 +278,43 @@ class BankStatementExtractor:
                     transaction[header_name] = ''
             
             transaction['standardized_date'] = self.standardize_date(date_value)
+            # transaction['table_source'] = f"Table_{table_num}"
+            
             self.all_transactions.append(transaction)
     
-    def extract_transactions(self, pdf_path):
+    def extract_transactions(self, pdf_path, progress_callback=None):
         """Main extraction method"""
         try:
-            self.validate_pdf(pdf_path)
+            num_pages = self.validate_pdf(pdf_path)
+            
+            if progress_callback:
+                progress_callback("Attempting Camelot extraction...")
             
             tables = camelot.read_pdf(pdf_path, pages='all', flavor='lattice')
             
             if not tables:
+                if progress_callback:
+                    progress_callback("Camelot lattice failed, trying stream flavor...")
                 tables = camelot.read_pdf(pdf_path, pages='all', flavor='stream', edge_tol=75, row_tol=10)
             
             if tables:
+                if progress_callback:
+                    progress_callback(f"Found {len(tables)} tables")
+                
                 for i, table in enumerate(tables):
-                    self.process_table(table, i + 1)
+                    self.process_table(table, i + 1, progress_callback)
                     
+                if progress_callback and self.extracted_headers:
+                    progress_callback(f"Using headers: {self.extracted_headers}")
+            else:
+                if progress_callback:
+                    progress_callback("No tables found")
+                
         except Exception as e:
-            raise Exception(f"Error in extraction: {e}")
+            error_msg = f"Error in extraction: {e}"
+            if progress_callback:
+                progress_callback(error_msg)
+            raise Exception(error_msg)
     
     def get_dataframe(self):
         """Return all transactions as DataFrame with extracted headers"""
@@ -303,24 +354,31 @@ class BankStatementExtractor:
         return summary
 
 
-def extract_bank_statement(pdf_path, output_csv=None):
+def extract_bank_statement(pdf_path, output_csv=None, progress_callback=None):
     """
     Enhanced bank statement extraction with automatic header detection
     
     Args:
         pdf_path (str): Path to PDF bank statement
         output_csv (str, optional): Path to save CSV output
+        progress_callback (function, optional): Callback function for progress updates
     
     Returns:
         pandas.DataFrame: Extracted transactions with detected headers
         dict: Summary with header detection info
     """
     extractor = BankStatementExtractor()
-    extractor.extract_transactions(pdf_path)
+    
+    if progress_callback:
+        progress_callback(f"Extracting from: {pdf_path}")
+    
+    extractor.extract_transactions(pdf_path, progress_callback)
     
     df = extractor.get_dataframe()
     
     if output_csv:
-        extractor.save_to_csv(output_csv)
+        num_saved = extractor.save_to_csv(output_csv)
+        if progress_callback:
+            progress_callback(f"Saved {num_saved} transactions to {output_csv}")
     
     return df, extractor.get_summary()

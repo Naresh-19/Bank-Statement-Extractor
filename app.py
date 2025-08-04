@@ -188,7 +188,6 @@ st.markdown("""
         gap: 1rem;
         flex-wrap: wrap;
     }
-</style>
 """, unsafe_allow_html=True)
 
 def main():
@@ -196,18 +195,14 @@ def main():
     st.markdown('<h1 class="main-title">Bank Statement Extractor</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Extract transaction data from your bank statements with AI-powered precision</p>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-    
     setup_sidebar()
-    
     st.markdown('<div class="info-card">📤 Upload your bank statement PDF to automatically extract and analyze transaction data</div>', unsafe_allow_html=True)
-    
     uploaded_file = st.file_uploader(
         "Choose your PDF file",
         type=['pdf'],
         help="Supported formats: PDF files with tabular transaction data",
         label_visibility="collapsed"
     )
-    
     if uploaded_file is None:
         st.markdown("""
         <div style="text-align: center; color: #64748b; margin-top: 1rem;">
@@ -215,7 +210,7 @@ def main():
             <p style="font-size: 0.875rem;">Maximum file size: 200MB</p>
         </div>
         """, unsafe_allow_html=True)
-    
+    st.markdown('</div>', unsafe_allow_html=True)
     if uploaded_file is not None:
         display_file_info(uploaded_file)
         if st.button("🚀 Extract Transactions", type="primary", use_container_width=True):
@@ -257,17 +252,30 @@ def display_file_info(uploaded_file):
     """, unsafe_allow_html=True)
 
 def process_pdf(uploaded_file):
+    progress_container = st.container()
+    log_container = st.container()
+    results_container = st.container()
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             temp_pdf_path = tmp_file.name
-
-        with st.spinner("🔄 Analyzing PDF structure and extracting transactions..."):
-            df, summary = extract_bank_statement(temp_pdf_path)
-
+        progress_messages = []
+        def progress_callback(message):
+            progress_messages.append(message)
+        with progress_container:
+            with st.spinner("🔄 Analyzing PDF structure and extracting transactions..."):
+                df, summary = extract_bank_statement(
+                    temp_pdf_path, 
+                    progress_callback=progress_callback
+                )
         os.unlink(temp_pdf_path)
-        display_modern_results(df, summary, uploaded_file.name)
-        
+        with log_container:
+            with st.expander("📋 View Processing Log", expanded=False):
+                st.markdown("**Extraction Steps:**")
+                for i, msg in enumerate(progress_messages, 1):
+                    st.markdown(f"`{i:02d}.` {msg}")
+        with results_container:
+            display_modern_results(df, summary, uploaded_file.name)
     except Exception as e:
         st.markdown(f'<div class="error-card">❌ <strong>Processing Error:</strong> {str(e)}</div>', unsafe_allow_html=True)
         with st.expander("🔧 Troubleshooting Tips"):
@@ -286,7 +294,6 @@ def process_pdf(uploaded_file):
 
 def display_modern_results(df, summary, filename):
     st.markdown("---")
-    
     if df.empty:
         st.markdown('<div class="warning-card">⚠️ <strong>No transactions found</strong><br>The PDF may not contain tabular transaction data or tables may not be properly formatted.</div>', unsafe_allow_html=True)
         with st.expander("💡 Suggestions for Better Results"):
@@ -298,20 +305,16 @@ def display_modern_results(df, summary, filename):
             4. **Try different statement:** Some formats work better than others
             """)
         return
-
     header_status = "✅ Headers auto-detected" if summary.get('header_detection_success', False) else "⚠️ Using generic headers"
     st.markdown(f'<div class="success-card">✅ <strong>Successfully extracted {len(df):,} transactions</strong><br>From: {filename}<br>{header_status}</div>', unsafe_allow_html=True)
-
     if summary.get('extracted_headers'):
         with st.expander("🏷️ Header Detection Details", expanded=False):
             st.markdown("**Original Headers Detected:**")
             for i, header in enumerate(summary['extracted_headers'], 1):
                 st.markdown(f"`{i:02d}.` {header}")
-
     st.markdown('<div class="center-content">', unsafe_allow_html=True)
     st.markdown("### 📊 Extraction Summary")
     st.markdown('</div>', unsafe_allow_html=True)
-
     metrics_cols = st.columns(4)
     header_quality = "Auto" if summary.get('header_detection_success', False) else "Generic"
     metrics = [
@@ -320,7 +323,6 @@ def display_modern_results(df, summary, filename):
         ("📅", "Date Range", summary['date_range'] if summary['date_range'] else "Not detected"),
         ("🏷️", "Headers", header_quality)
     ]
-
     for i, (icon, label, value) in enumerate(metrics):
         with metrics_cols[i]:
             st.markdown(f"""
@@ -330,38 +332,31 @@ def display_modern_results(df, summary, filename):
                 <div class="metric-label">{label}</div>
             </div>
             """, unsafe_allow_html=True)
-
     st.markdown("---")
     st.markdown('<div class="center-content">', unsafe_allow_html=True)
     st.markdown("### 🏷️ Detected Columns")
     st.markdown('</div>', unsafe_allow_html=True)
-
     columns_html = ""
     for col_name in summary['columns']:
         columns_html += f'<span class="column-tag">{col_name}</span>'
     st.markdown(f'<div style="text-align: center; margin: 1rem 0;">{columns_html}</div>', unsafe_allow_html=True)
-
     st.markdown("---")
     st.markdown('<div class="center-content">', unsafe_allow_html=True)
     st.markdown("### 📑 Transaction Data Preview")
     st.markdown('</div>', unsafe_allow_html=True)
-
     st.dataframe(
         df,
         use_container_width=True,
         height=500,
         hide_index=True
     )
-
     st.markdown("---")
     st.markdown('<div class="center-content">', unsafe_allow_html=True)
     st.markdown("### 💾 Export Options")
     st.markdown('</div>', unsafe_allow_html=True)
-
     download_cols = st.columns([2, 1, 1, 2])
     csv_data = df.to_csv(index=False)
     base_filename = filename.replace('.pdf', '')
-
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Transactions')
@@ -376,9 +371,7 @@ def display_modern_results(df, summary, filename):
             summary_data.append(['Detected Headers', ', '.join(summary['extracted_headers'])])
         summary_df = pd.DataFrame(summary_data, columns=['Metric', 'Value'])
         summary_df.to_excel(writer, index=False, sheet_name='Summary')
-
     excel_data = buffer.getvalue()
-
     with download_cols[1]:
         st.download_button(
             label="📊 Download CSV",
@@ -387,7 +380,6 @@ def display_modern_results(df, summary, filename):
             mime="text/csv",
             use_container_width=True
         )
-
     with download_cols[2]:
         st.download_button(
             label="📈 Download Excel",
@@ -396,7 +388,6 @@ def display_modern_results(df, summary, filename):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
     st.markdown("---")
     with st.expander("📋 Export Information"):
         st.markdown("""
